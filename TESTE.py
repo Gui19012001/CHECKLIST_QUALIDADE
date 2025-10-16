@@ -13,7 +13,58 @@ import pytz
 TZ = pytz.timezone("America/Sao_Paulo")
 
 
+# =============================
+# Login centralizado e estilizado
+# =============================
+usuarios = {
+    "admin": "admin",
+    "Maria": "maria",
+    "Catia": "catia",
+    "Vera": "vera",
+    "Bruno": "bruno"
+}
 
+def login():
+    if 'logado' not in st.session_state:
+        st.session_state['logado'] = False
+        st.session_state['usuario'] = None
+
+    if not st.session_state['logado']:
+        # Tela centralizada
+        st.markdown("""
+        <div style="
+            max-width:400px;
+            margin:auto;
+            margin-top:100px;
+            padding:40px;
+            border-radius:15px;
+            background: linear-gradient(135deg, #DDE3FF, #E5F5E5);
+            box-shadow: 0px 0px 20px rgba(0,0,0,0.1);
+            text-align:center;
+        ">
+            <h1 style='color:#2F4F4F;'>🔒 MÓDULO DE PRODUÇÃO</h1>
+            <p style='color:#555;'>Entre com seu usuário e senha</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        usuario = st.text_input("Usuário", key="login_user")
+        senha = st.text_input("Senha", type="password", key="login_pass")
+
+        if st.button("Entrar"):
+            if usuario in usuarios and usuarios[usuario] == senha:
+                st.session_state['logado'] = True
+                st.session_state['usuario'] = usuario
+                st.success(f"✅ Bem-vindo, {usuario}!")
+                st.experimental_rerun()  # força atualização para carregar conteúdo
+            else:
+                st.error("❌ Usuário ou senha incorretos.")
+        st.stop()
+    else:
+        st.sidebar.write(f"👤 Logado como: `{st.session_state['usuario']}`")
+        if st.sidebar.button("Sair"):
+            st.session_state['logado'] = False
+            st.session_state['usuario'] = None
+            st.experimental_rerun()
 
 # =============================
 # Carregar variáveis de ambiente
