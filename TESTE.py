@@ -278,6 +278,10 @@ def checklist_reinspecao(numero_serie, usuario):
 # ==============================
 st.title("Sistema de Inspeção de Qualidade")
 
+# Garantir que a chave 'usuario' esteja no session_state
+if 'usuario' not in st.session_state:
+    st.session_state['usuario'] = "default_usuario"  # Ou personalize conforme necessário
+
 menu = st.sidebar.selectbox("Menu", ["Inspeção de Qualidade", "Reinspeção"])
 
 if menu == "Inspeção de Qualidade":
@@ -298,19 +302,19 @@ if menu == "Inspeção de Qualidade":
 
     if codigos_disponiveis:
         numero_serie = st.selectbox("Selecione o Nº de Série para Inspeção", codigos_disponiveis, index=0)
-        usuario = st.session_state['usuario']
+        usuario = st.session_state['usuario']  # Agora a chave 'usuario' foi garantida
         checklist_qualidade(numero_serie, usuario)
     else:
         st.info("Nenhum código disponível para inspeção hoje.")
 
 elif menu == "Reinspeção":
-    usuario = st.session_state['usuario']
+    usuario = st.session_state['usuario']  # Garantido
     df_checks = carregar_checklists()
 
     if df_checks.empty:
         st.info("Nenhum checklist registrado ainda.")
     else:
-        df_reprovados = df_checks[(df_checks["produto_reprovado"]=="Sim") & (df_checks["reinspecao"]!="Sim")]
+        df_reprovados = df_checks[(df_checks["produto_reprovado"] == "Sim") & (df_checks["reinspecao"] != "Sim")]
         numeros_serie_reinspecao = df_reprovados["numero_serie"].unique() if not df_reprovados.empty else []
 
         if len(numeros_serie_reinspecao) == 0:
@@ -318,3 +322,4 @@ elif menu == "Reinspeção":
         else:
             numero_serie = st.selectbox("Selecione o Nº de Série para Reinspeção", numeros_serie_reinspecao, index=0)
             checklist_reinspecao(numero_serie, usuario)
+
