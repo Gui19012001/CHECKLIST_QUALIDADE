@@ -42,7 +42,7 @@ def login():
             box-shadow: 0px 0px 20px rgba(0,0,0,0.1);
             text-align:center;
         ">
-            <h1 style='color:#2F4F4F;'>🔒 MÓDULO DE PRODUÇÃO</h1>
+            <h1 style='color:#2F4F4F;'>🔒 CHECKLIST QUALITY GATE</h1>
             <p style='color:#555;'>Entre com seu usuário e senha</p>
         </div>
         """, unsafe_allow_html=True)
