@@ -66,15 +66,17 @@ def login():
             st.session_state['usuario'] = None
             st.experimental_rerun()
 
-# =============================
 # Carregar variáveis de ambiente
-# =============================
-env_path = Path(__file__).parent / "teste.env"  # Ajuste se necessário
+env_path = Path(__file__).parent / "teste.env"
 load_dotenv(dotenv_path=env_path)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# 🔐 Executa login antes de mostrar o app
+login()
+
 
 # ==============================
 # Funções de Supabase
