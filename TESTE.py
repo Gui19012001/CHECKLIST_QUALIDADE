@@ -58,29 +58,16 @@ def carregar_apontamentos_hoje():
     return df
 
 
-@st.cache_data(ttl=300)
-def carregar_series_ja_inspecionadas():
-    """
-    Busca TODAS as séries já inspecionadas,
-    sem trazer histórico pesado.
-    """
-    series = set()
-    inicio = 0
-    passo = 1000
+@st.cache_data(ttl=60)
+def carregar_series_inspecionadas_hoje():
+    hoje_utc = datetime.datetime.now(TZ).astimezone(pytz.UTC).date().isoformat()
 
-    while True:
-        res = supabase.table("checklists") \
-            .select("numero_serie") \
-            .range(inicio, inicio + passo - 1) \
-            .execute()
+    res = supabase.table("checklists") \
+        .select("numero_serie") \
+        .gte("data_hora", hoje_utc) \
+        .execute()
 
-        if not res.data:
-            break
-
-        series.update(r["numero_serie"] for r in res.data)
-        inicio += passo
-
-    return series
+    return {r["numero_serie"] for r in res.data} if res.data else set()
 
 
 # ================================
@@ -88,14 +75,17 @@ def carregar_series_ja_inspecionadas():
 # ================================
 def salvar_checklist(serie, resultados, usuario):
 
+    hoje_utc = datetime.datetime.now(TZ).astimezone(pytz.UTC).date().isoformat()
+
     existe = supabase.table("checklists") \
         .select("id") \
         .eq("numero_serie", serie) \
+        .gte("data_hora", hoje_utc) \
         .limit(1) \
         .execute()
 
     if existe.data:
-        st.error("⚠️ INVÁLIDO! DUPLICIDADE – Este Nº de Série já foi inspecionado.")
+        st.error("⚠️ INVÁLIDO! DUPLICIDADE – Este Nº de Série já foi inspecionado hoje.")
         return
 
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
@@ -227,7 +217,7 @@ def app():
     st.sidebar.selectbox("Menu", ["Inspeção de Qualidade"])
 
     df_apont = carregar_apontamentos_hoje()
-    series_inspecionadas = carregar_series_ja_inspecionadas()
+    series_inspecionadas = carregar_series_inspecionadas_hoje()
 
     codigos = df_apont["numero_serie"].unique().tolist() if not df_apont.empty else []
 
