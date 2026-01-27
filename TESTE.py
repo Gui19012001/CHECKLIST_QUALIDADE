@@ -137,8 +137,7 @@ def checklist_qualidade(numero_serie, usuario):
             cols = st.columns([7, 3])
             cols[0].markdown(f"**{i}. {pergunta}**")
             resultados[i] = cols[1].radio(
-                "",
-                ["", "✅", "❌", "🟡"],  # <-- opção vazia obrigando escolha
+                "", ["", "✅", "❌", "🟡"],  # opção vazia obrigando escolha
                 horizontal=True,
                 key=f"{numero_serie}_{i}",
                 label_visibility="collapsed"
@@ -147,7 +146,6 @@ def checklist_qualidade(numero_serie, usuario):
         salvar = st.form_submit_button("💾 Salvar Checklist")
 
     if salvar:
-        # Valida se todas as perguntas foram respondidas
         if any(resultados[i] == "" for i in resultados):
             st.error("⚠️ Você precisa selecionar uma opção para todas as perguntas antes de salvar.")
             return
@@ -181,7 +179,6 @@ def login():
 def app():
     login()
 
-    # Carrega apontamentos do dia
     df_apont = carregar_apontamentos()
     hoje = datetime.datetime.now(TZ).date()
     df_hoje = df_apont[df_apont["data_hora"].dt.date == hoje]
@@ -190,10 +187,8 @@ def app():
         st.info("Nenhum apontamento hoje")
         return
 
-    # Normaliza numero_serie
     df_hoje["numero_serie"] = df_hoje["numero_serie"].astype(str).str.strip()
 
-    # Busca todos os checklists inspecionados hoje
     inicio_utc, fim_utc = intervalo_hoje_utc()
     series_inspecionadas_hoje = set()
     offset = 0
@@ -212,13 +207,11 @@ def app():
         series_inspecionadas_hoje.update(str(r["numero_serie"]).strip() for r in res.data)
         offset += batch
 
-    # Session state
     if "series_concluidas" not in st.session_state:
         st.session_state.series_concluidas = set()
     else:
         st.session_state.series_concluidas = {str(s).strip() for s in st.session_state.series_concluidas}
 
-    # Apenas séries que ainda não foram inspecionadas
     df_pendentes = df_hoje[
         ~df_hoje["numero_serie"].isin(series_inspecionadas_hoje | st.session_state.series_concluidas)
     ]
@@ -227,18 +220,19 @@ def app():
         st.success("✅ Todos os apontamentos de hoje já foram inspecionados")
         return
 
-    # Selectbox só com séries pendentes
+    # --- ORDENANDO pelo mais antigo primeiro ---
+    df_pendentes = df_pendentes.sort_values("data_hora", ascending=True)
     serie = st.selectbox(
         "Selecione o Nº de Série",
-        sorted(df_pendentes["numero_serie"].unique())
+        sorted(df_pendentes["numero_serie"].unique(), key=lambda x: df_pendentes[df_pendentes["numero_serie"]==x]["data_hora"].iloc[0])
     )
 
     checklist_qualidade(serie, st.session_state.usuario)
-
 
 # ================================
 # START
 # ================================
 if __name__ == "__main__":
     app()
+
 
