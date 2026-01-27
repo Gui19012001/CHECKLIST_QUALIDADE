@@ -60,14 +60,24 @@ def carregar_apontamentos_hoje():
 
 @st.cache_data(ttl=60)
 def carregar_series_inspecionadas_hoje():
-    hoje_utc = datetime.datetime.now(TZ).astimezone(pytz.UTC).date().isoformat()
+    """
+    Retorna APENAS as séries inspecionadas HOJE,
+    usando data_hora >= início do dia local (convertido para UTC)
+    e garantindo DISTINCT por numero_serie.
+    """
+    inicio_dia_local = datetime.datetime.now(TZ).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    inicio_dia_utc = inicio_dia_local.astimezone(pytz.UTC).isoformat()
 
     res = supabase.table("checklists") \
         .select("numero_serie") \
-        .gte("data_hora", hoje_utc) \
+        .gte("data_hora", inicio_dia_utc) \
         .execute()
 
-    return {r["numero_serie"] for r in res.data} if res.data else set()
+    # DISTINCT manual (Supabase Python não tem distinct nativo)
+    return set(r["numero_serie"] for r in res.data) if res.data else set()
 
 
 # ================================
