@@ -8,7 +8,6 @@ from supabase import create_client
 import os
 from dotenv import load_dotenv
 from pathlib import Path
-import plotly.graph_objects as go
 
 # ================================
 # CONFIG
@@ -37,132 +36,57 @@ supabase = create_client(
 )
 
 # ================================
-# CACHE DE LEITURA
+# CACHE LEVE (APENAS APONTAMENTO)
 # ================================
-@st.cache_data(ttl=60)
-def carregar_checklists():
-    data = []
-    inicio = 0
-    passo = 250
-
-    while True:
-        res = (
-            supabase.table("checklists")
-            .select("*")
-            .range(inicio, inicio + passo - 1)
-            .execute()
-        )
-
-        if not res.data:
-            break
-
-        data.extend(res.data)
-        inicio += passo
-
-    df = pd.DataFrame(data)
-
-    if not df.empty and "data_hora" in df.columns:
-        df["data_hora"] = pd.to_datetime(
-            df["data_hora"],
-            utc=True,
-            format="ISO8601",
-            errors="coerce"
-        ).dt.tz_convert(TZ)
-
-    return df
-
-
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def carregar_apontamentos():
-    data = []
-    inicio = 0
-    passo = 250
-
-    while True:
-        res = (
-            supabase.table("apontamentos")
-            .select("*")
-            .range(inicio, inicio + passo - 1)
-            .execute()
-        )
-
-        if not res.data:
-            break
-
-        data.extend(res.data)
-        inicio += passo
-
-    df = pd.DataFrame(data)
-
-    if not df.empty and "data_hora" in df.columns:
-        df["data_hora"] = pd.to_datetime(
-            df["data_hora"],
-            utc=True,
-            format="ISO8601",
-            errors="coerce"
-        ).dt.tz_convert(TZ)
-
-    return df
-
-
-# ================================
-# CHECKLIST – SALVAMENTO
-# ================================
-def salvar_checklist(serie, resultados, usuario, foto_etiqueta=None, reinspecao=False):
-
-    existe = (
-        supabase.table("checklists")
-        .select("id")
-        .eq("numero_serie", serie)
-        .limit(1)
+    res = (
+        supabase.table("apontamentos")
+        .select("*")
+        .order("data_hora", desc=True)
+        .limit(500)
         .execute()
     )
 
-    if not reinspecao and existe.data:
-        st.error("⚠️ INVÁLIDO! DUPLICIDADE – Este Nº de Série já foi inspecionado.")
-        return False
+    df = pd.DataFrame(res.data)
+    if not df.empty:
+        df["data_hora"] = pd.to_datetime(df["data_hora"], utc=True).dt.tz_convert(TZ)
 
-    reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
-    data_hora = datetime.datetime.now(TZ).astimezone(pytz.UTC).isoformat()
+    return df
 
-    foto_base64 = None
-    if foto_etiqueta:
-        foto_base64 = base64.b64encode(foto_etiqueta.getvalue()).decode()
+
+# ================================
+# CHECKLIST – SALVAR
+# ================================
+def salvar_checklist(serie, resultados, usuario):
 
     registros = []
+    data_hora = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
 
     for item, info in resultados.items():
-        payload = {
+        registros.append({
             "numero_serie": serie,
             "item": item,
             "status": info["status"],
             "observacoes": info["obs"],
             "inspetor": usuario,
-            "data_hora": data_hora,
             "produto_reprovado": "Sim" if reprovado else "Não",
-            "reinspecao": "Sim" if reinspecao else "Não"
-        }
-
-        if item == "ETIQUETA" and foto_base64:
-            payload["foto_etiqueta"] = foto_base64
-
-        registros.append(payload)
+            "data_hora": data_hora
+        })
 
     supabase.table("checklists").insert(registros).execute()
+    st.cache_data.clear()
 
-    st.success(f"✅ Checklist salvo com sucesso – Nº Série {serie}")
-    return True
+    st.success(f"✅ Checklist salvo – Série {serie}")
 
 
 # ================================
 # UTIL
 # ================================
 def status_emoji_para_texto(emoji):
-    if emoji == "✅":
-        return "Conforme"
-    if emoji == "❌":
-        return "Não Conforme"
-    return "N/A"
+    return {"✅": "Conforme", "❌": "Não Conforme", "🟡": "N/A"}.get(emoji)
 
 
 # ================================
@@ -170,7 +94,7 @@ def status_emoji_para_texto(emoji):
 # ================================
 def checklist_qualidade(numero_serie, usuario):
 
-    st.markdown(f"## ✔️ Checklist de Qualidade – Nº de Série: {numero_serie}")
+    st.markdown(f"## ✔️ Checklist de Qualidade – Nº Série: {numero_serie}")
 
     perguntas = [
         "Etiqueta do produto – As informações estão corretas?",
@@ -198,51 +122,34 @@ def checklist_qualidade(numero_serie, usuario):
         10: "SOLDA"
     }
 
-    opcoes_modelos = {
-        4: ["Single", "Aço", "Alumínio", "N/A"],
-        6: ["Spring", "Cuíca", "N/A"],
-        7: ["Automático", "Manual", "N/A"],
-        10: ["Conforme", "Respingo", "Porosidade", "Falta de fusão"]
-    }
-
-    resultados, modelos = {}, {}
+    resultados = {}
 
     with st.form(f"form_{numero_serie}"):
         for i, pergunta in enumerate(perguntas, 1):
-            cols = st.columns([7, 2, 2])
+            cols = st.columns([7, 3])
             cols[0].markdown(f"**{i}. {pergunta}**")
 
-            resp = cols[1].radio(
+            resultados[i] = cols[1].radio(
                 "",
                 ["✅", "❌", "🟡"],
                 horizontal=True,
-                key=f"resp_{numero_serie}_{i}",
+                key=f"{numero_serie}_{i}",
                 index=None,
                 label_visibility="collapsed"
             )
-            resultados[i] = resp
-
-            if i in opcoes_modelos:
-                modelos[i] = cols[2].selectbox(
-                    "Modelo",
-                    [""] + opcoes_modelos[i],
-                    key=f"modelo_{numero_serie}_{i}",
-                    label_visibility="collapsed"
-                )
-            else:
-                modelos[i] = None
 
         salvar = st.form_submit_button("💾 Salvar Checklist")
 
     if salvar:
-        dados = {}
-        for i, r in resultados.items():
-            dados[item_keys[i]] = {
-                "status": status_emoji_para_texto(r),
-                "obs": modelos.get(i)
+        dados = {
+            item_keys[i]: {
+                "status": status_emoji_para_texto(resultados[i]),
+                "obs": ""
             }
-
+            for i in resultados
+        }
         salvar_checklist(numero_serie, dados, usuario)
+        st.rerun()
 
 
 # ================================
@@ -273,39 +180,47 @@ def login():
 def app():
     login()
 
-    menu = st.sidebar.selectbox("Menu", ["Inspeção de Qualidade"])
+    df_apont = carregar_apontamentos()
+    hoje = datetime.datetime.now(TZ).date()
+    df_hoje = df_apont[df_apont["data_hora"].dt.date == hoje]
 
-    if menu == "Inspeção de Qualidade":
-        df_apont = carregar_apontamentos()
-        hoje = datetime.datetime.now(TZ).date()
+    if df_hoje.empty:
+        st.info("Nenhum apontamento hoje")
+        return
 
-        # 🔹 Apontamentos de hoje
-        df_hoje = (
-            df_apont[df_apont["data_hora"].dt.date == hoje]
-            if not df_apont.empty else pd.DataFrame()
-        )
+    hoje_str = hoje.strftime("%Y-%m-%d")
 
-        codigos = df_hoje["numero_serie"].unique().tolist()
+    # 🔥 BUSCA CHECKLISTS DE HOJE (IGUAL AO SCRIPT BOM)
+    res = (
+        supabase.table("checklists")
+        .select("numero_serie")
+        .gte("data_hora", f"{hoje_str}T00:00:00")
+        .lte("data_hora", f"{hoje_str}T23:59:59")
+        .execute()
+    )
 
-        # 🔹 Checklists feitos HOJE
-        df_checks = carregar_checklists()
+    if res.data:
+        df_check = pd.DataFrame(res.data)
 
-        if not df_checks.empty:
-            df_checks_hoje = df_checks[
-                df_checks["data_hora"].dt.date == hoje
-            ]
-            ja_feitos_hoje = df_checks_hoje["numero_serie"].unique()
-        else:
-            ja_feitos_hoje = []
+        df_pendentes = df_hoje.merge(
+            df_check,
+            on="numero_serie",
+            how="left",
+            indicator=True
+        ).query('_merge == "left_only"').drop(columns="_merge")
+    else:
+        df_pendentes = df_hoje.copy()
 
-        # 🔹 Disponíveis = apontados hoje - inspecionados hoje
-        disponiveis = [c for c in codigos if c not in ja_feitos_hoje]
+    if df_pendentes.empty:
+        st.success("✅ Todos os apontamentos de hoje já foram inspecionados")
+        return
 
-        if disponiveis:
-            serie = st.selectbox("Selecione o Nº de Série", disponiveis)
-            checklist_qualidade(serie, st.session_state.usuario)
-        else:
-            st.info("Nenhum código disponível para inspeção.")
+    serie = st.selectbox(
+        "Selecione o Nº de Série",
+        df_pendentes["numero_serie"].unique()
+    )
+
+    checklist_qualidade(serie, st.session_state.usuario)
 
 
 if __name__ == "__main__":
