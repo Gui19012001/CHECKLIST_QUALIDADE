@@ -85,7 +85,7 @@ def salvar_checklist(serie, resultados, usuario):
         .eq("numero_serie", serie)
         .gte("data_hora", inicio_utc)
         .lte("data_hora", fim_utc)
-        .limit(1)
+        .limit(1000)
         .execute()
     )
 
