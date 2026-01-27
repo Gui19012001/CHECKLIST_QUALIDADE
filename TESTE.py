@@ -43,7 +43,7 @@ supabase = create_client(
 def carregar_checklists():
     data = []
     inicio = 0
-    passo = 1000
+    passo = 250
 
     while True:
         res = supabase.table("checklists") \
@@ -74,7 +74,7 @@ def carregar_checklists():
 def carregar_apontamentos():
     data = []
     inicio = 0
-    passo = 200
+    passo = 250
 
     while True:
         res = supabase.table("apontamentos") \
