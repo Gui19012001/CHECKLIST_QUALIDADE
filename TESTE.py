@@ -13,6 +13,7 @@ from pathlib import Path
 st.set_page_config(page_title="Controle de Qualidade", layout="wide")
 
 TZ = pytz.timezone("America/Sao_Paulo")
+UTC = pytz.UTC
 
 usuarios = {
     "admin": "admin",
@@ -58,15 +59,25 @@ def carregar_apontamentos():
 # ================================
 def salvar_checklist(serie, resultados, usuario):
 
-    hoje = datetime.datetime.now(TZ).date().strftime("%Y-%m-%d")
+    agora_local = datetime.datetime.now(TZ)
 
-    # 🔒 BLOQUEIO DEFINITIVO (HOJE)
+    inicio_dia_local = TZ.localize(
+        datetime.datetime.combine(agora_local.date(), datetime.time.min)
+    )
+    fim_dia_local = TZ.localize(
+        datetime.datetime.combine(agora_local.date(), datetime.time.max)
+    )
+
+    inicio_utc = inicio_dia_local.astimezone(UTC).isoformat()
+    fim_utc = fim_dia_local.astimezone(UTC).isoformat()
+
+    # 🔒 BLOQUEIO REAL (UTC CORRETO)
     existe = (
         supabase.table("checklists")
         .select("id")
         .eq("numero_serie", serie)
-        .gte("data_hora", f"{hoje}T00:00:00")
-        .lte("data_hora", f"{hoje}T23:59:59")
+        .gte("data_hora", inicio_utc)
+        .lte("data_hora", fim_utc)
         .limit(1)
         .execute()
     )
@@ -93,7 +104,6 @@ def salvar_checklist(serie, resultados, usuario):
 
     supabase.table("checklists").insert(registros).execute()
 
-    # 🔥 ATUALIZA IMEDIATA
     st.cache_data.clear()
     st.session_state.series_concluidas.add(serie)
 
@@ -208,13 +218,20 @@ def app():
         st.info("Nenhum apontamento hoje")
         return
 
-    hoje_str = hoje.strftime("%Y-%m-%d")
+    agora_local = datetime.datetime.now(TZ)
+    inicio_utc = TZ.localize(
+        datetime.datetime.combine(agora_local.date(), datetime.time.min)
+    ).astimezone(UTC).isoformat()
+
+    fim_utc = TZ.localize(
+        datetime.datetime.combine(agora_local.date(), datetime.time.max)
+    ).astimezone(UTC).isoformat()
 
     res = (
         supabase.table("checklists")
         .select("numero_serie")
-        .gte("data_hora", f"{hoje_str}T00:00:00")
-        .lte("data_hora", f"{hoje_str}T23:59:59")
+        .gte("data_hora", inicio_utc)
+        .lte("data_hora", fim_utc)
         .execute()
     )
 
@@ -240,4 +257,3 @@ def app():
 
 if __name__ == "__main__":
     app()
-
