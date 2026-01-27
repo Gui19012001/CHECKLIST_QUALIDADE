@@ -1,9 +1,7 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import datetime
 import pytz
-import base64
 from supabase import create_client
 import os
 from dotenv import load_dotenv
@@ -36,7 +34,7 @@ supabase = create_client(
 )
 
 # ================================
-# CACHE LEVE (APENAS APONTAMENTO)
+# CACHE – APONTAMENTOS
 # ================================
 @st.cache_data(ttl=30)
 def carregar_apontamentos():
@@ -56,15 +54,32 @@ def carregar_apontamentos():
 
 
 # ================================
-# CHECKLIST – SALVAR
+# CHECKLIST – SALVAR (BLINDADO)
 # ================================
 def salvar_checklist(serie, resultados, usuario):
 
-    registros = []
-    data_hora = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    hoje = datetime.datetime.now(TZ).date()
+    hoje_str = hoje.strftime("%Y-%m-%d")
 
+    # 🔒 BLOQUEIO DEFINITIVO – JÁ EXISTE HOJE?
+    existe = (
+        supabase.table("checklists")
+        .select("id")
+        .eq("numero_serie", serie)
+        .gte("data_hora", f"{hoje_str}T00:00:00")
+        .lte("data_hora", f"{hoje_str}T23:59:59")
+        .limit(1)
+        .execute()
+    )
+
+    if existe.data:
+        st.error("⚠️ Checklist já salvo hoje para esta série.")
+        return False
+
+    data_hora = datetime.datetime.now(datetime.timezone.utc).isoformat()
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
 
+    registros = []
     for item, info in resultados.items():
         registros.append({
             "numero_serie": serie,
@@ -77,9 +92,12 @@ def salvar_checklist(serie, resultados, usuario):
         })
 
     supabase.table("checklists").insert(registros).execute()
-    st.cache_data.clear()
 
-    st.success(f"✅ Checklist salvo – Série {serie}")
+    # 🔄 LIMPA TUDO
+    st.cache_data.clear()
+    st.session_state["salvo"] = True
+
+    return True
 
 
 # ================================
@@ -90,7 +108,7 @@ def status_emoji_para_texto(emoji):
 
 
 # ================================
-# CHECKLIST VISUAL (INALTERADO)
+# CHECKLIST VISUAL
 # ================================
 def checklist_qualidade(numero_serie, usuario):
 
@@ -124,7 +142,7 @@ def checklist_qualidade(numero_serie, usuario):
 
     resultados = {}
 
-    with st.form(f"form_{numero_serie}"):
+    with st.form(f"form_{numero_serie}", clear_on_submit=False):
         for i, pergunta in enumerate(perguntas, 1):
             cols = st.columns([7, 3])
             cols[0].markdown(f"**{i}. {pergunta}**")
@@ -140,7 +158,7 @@ def checklist_qualidade(numero_serie, usuario):
 
         salvar = st.form_submit_button("💾 Salvar Checklist")
 
-    if salvar:
+    if salvar and not st.session_state.get("salvo"):
         dados = {
             item_keys[i]: {
                 "status": status_emoji_para_texto(resultados[i]),
@@ -148,8 +166,10 @@ def checklist_qualidade(numero_serie, usuario):
             }
             for i in resultados
         }
-        salvar_checklist(numero_serie, dados, usuario)
-        st.rerun()
+
+        if salvar_checklist(numero_serie, dados, usuario):
+            st.success("✅ Checklist salvo com sucesso")
+            st.rerun()
 
 
 # ================================
@@ -167,6 +187,7 @@ def login():
             if usuarios.get(user) == pwd:
                 st.session_state.logado = True
                 st.session_state.usuario = user
+                st.session_state["salvo"] = False
                 st.rerun()
             else:
                 st.error("Usuário ou senha inválidos")
@@ -180,6 +201,8 @@ def login():
 def app():
     login()
 
+    st.session_state.setdefault("salvo", False)
+
     df_apont = carregar_apontamentos()
     hoje = datetime.datetime.now(TZ).date()
     df_hoje = df_apont[df_apont["data_hora"].dt.date == hoje]
@@ -190,7 +213,6 @@ def app():
 
     hoje_str = hoje.strftime("%Y-%m-%d")
 
-    # 🔥 BUSCA CHECKLISTS DE HOJE (IGUAL AO SCRIPT BOM)
     res = (
         supabase.table("checklists")
         .select("numero_serie")
@@ -201,7 +223,6 @@ def app():
 
     if res.data:
         df_check = pd.DataFrame(res.data)
-
         df_pendentes = df_hoje.merge(
             df_check,
             on="numero_serie",
