@@ -54,34 +54,32 @@ def carregar_apontamentos():
 
 
 # ================================
-# CHECKLIST – SALVAR (BLINDADO)
+# CHECKLIST – SALVAR (COM BLOQUEIO)
 # ================================
 def salvar_checklist(serie, resultados, usuario):
 
-    hoje = datetime.datetime.now(TZ).date()
-    hoje_str = hoje.strftime("%Y-%m-%d")
+    hoje = datetime.datetime.now(TZ).date().strftime("%Y-%m-%d")
 
-    # 🔒 BLOQUEIO DEFINITIVO – JÁ EXISTE HOJE?
+    # 🔒 BLOQUEIO DEFINITIVO (HOJE)
     existe = (
         supabase.table("checklists")
         .select("id")
         .eq("numero_serie", serie)
-        .gte("data_hora", f"{hoje_str}T00:00:00")
-        .lte("data_hora", f"{hoje_str}T23:59:59")
+        .gte("data_hora", f"{hoje}T00:00:00")
+        .lte("data_hora", f"{hoje}T23:59:59")
         .limit(1)
         .execute()
     )
 
     if existe.data:
-        st.error("⚠️ Checklist já salvo hoje para esta série.")
-        return False
+        st.error("⚠️ Este Nº de Série já foi inspecionado hoje.")
+        return
 
     data_hora = datetime.datetime.now(datetime.timezone.utc).isoformat()
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
 
-    registros = []
-    for item, info in resultados.items():
-        registros.append({
+    registros = [
+        {
             "numero_serie": serie,
             "item": item,
             "status": info["status"],
@@ -89,15 +87,18 @@ def salvar_checklist(serie, resultados, usuario):
             "inspetor": usuario,
             "produto_reprovado": "Sim" if reprovado else "Não",
             "data_hora": data_hora
-        })
+        }
+        for item, info in resultados.items()
+    ]
 
     supabase.table("checklists").insert(registros).execute()
 
-    # 🔄 LIMPA TUDO
+    # 🔥 ATUALIZA IMEDIATA
     st.cache_data.clear()
-    st.session_state["salvo"] = True
+    st.session_state.series_concluidas.add(serie)
 
-    return True
+    st.success(f"✅ Checklist salvo – Série {serie}")
+    st.rerun()
 
 
 # ================================
@@ -108,7 +109,7 @@ def status_emoji_para_texto(emoji):
 
 
 # ================================
-# CHECKLIST VISUAL
+# CHECKLIST VISUAL (INALTERADO)
 # ================================
 def checklist_qualidade(numero_serie, usuario):
 
@@ -142,7 +143,7 @@ def checklist_qualidade(numero_serie, usuario):
 
     resultados = {}
 
-    with st.form(f"form_{numero_serie}", clear_on_submit=False):
+    with st.form(f"form_{numero_serie}"):
         for i, pergunta in enumerate(perguntas, 1):
             cols = st.columns([7, 3])
             cols[0].markdown(f"**{i}. {pergunta}**")
@@ -158,7 +159,7 @@ def checklist_qualidade(numero_serie, usuario):
 
         salvar = st.form_submit_button("💾 Salvar Checklist")
 
-    if salvar and not st.session_state.get("salvo"):
+    if salvar:
         dados = {
             item_keys[i]: {
                 "status": status_emoji_para_texto(resultados[i]),
@@ -167,9 +168,7 @@ def checklist_qualidade(numero_serie, usuario):
             for i in resultados
         }
 
-        if salvar_checklist(numero_serie, dados, usuario):
-            st.success("✅ Checklist salvo com sucesso")
-            st.rerun()
+        salvar_checklist(numero_serie, dados, usuario)
 
 
 # ================================
@@ -187,7 +186,7 @@ def login():
             if usuarios.get(user) == pwd:
                 st.session_state.logado = True
                 st.session_state.usuario = user
-                st.session_state["salvo"] = False
+                st.session_state.series_concluidas = set()
                 st.rerun()
             else:
                 st.error("Usuário ou senha inválidos")
@@ -200,8 +199,6 @@ def login():
 # ================================
 def app():
     login()
-
-    st.session_state.setdefault("salvo", False)
 
     df_apont = carregar_apontamentos()
     hoje = datetime.datetime.now(TZ).date()
@@ -221,16 +218,13 @@ def app():
         .execute()
     )
 
-    if res.data:
-        df_check = pd.DataFrame(res.data)
-        df_pendentes = df_hoje.merge(
-            df_check,
-            on="numero_serie",
-            how="left",
-            indicator=True
-        ).query('_merge == "left_only"').drop(columns="_merge")
-    else:
-        df_pendentes = df_hoje.copy()
+    inspecionadas = {r["numero_serie"] for r in res.data} if res.data else set()
+
+    df_pendentes = df_hoje[
+        ~df_hoje["numero_serie"].isin(
+            inspecionadas | st.session_state.series_concluidas
+        )
+    ]
 
     if df_pendentes.empty:
         st.success("✅ Todos os apontamentos de hoje já foram inspecionados")
