@@ -180,19 +180,30 @@ def app():
         st.info("Nenhum apontamento hoje")
         return
 
+    # Convertendo para string e removendo espaços
+    df_hoje["numero_serie"] = df_hoje["numero_serie"].astype(str).str.strip()
+
     inicio_utc, fim_utc = intervalo_hoje_utc()
 
-    # ✅ Buscar todas séries inspecionadas hoje com limite alto
+    # Buscar todas séries inspecionadas hoje
     res = (
         supabase.table("checklists")
         .select("numero_serie")
         .gte("data_hora", inicio_utc)
         .lte("data_hora", fim_utc)
-        .limit(100000)  
         .execute()
     )
-    series_inspecionadas_hoje = {r["numero_serie"] for r in res.data} if res.data else set()
 
+    series_inspecionadas_hoje = {str(r["numero_serie"]).strip() for r in res.data} if res.data else set()
+
+    # Garantir que session_state exista
+    if "series_concluidas" not in st.session_state:
+        st.session_state.series_concluidas = set()
+    else:
+        # Também converter para string
+        st.session_state.series_concluidas = {str(s).strip() for s in st.session_state.series_concluidas}
+
+    # ✅ Apenas séries não inspecionadas
     df_pendentes = df_hoje[
         ~df_hoje["numero_serie"].isin(series_inspecionadas_hoje | st.session_state.series_concluidas)
     ]
@@ -201,8 +212,13 @@ def app():
         st.success("✅ Todos os apontamentos de hoje já foram inspecionados")
         return
 
-    serie = st.selectbox("Selecione o Nº de Série", sorted(df_pendentes["numero_serie"].unique()))
+    serie = st.selectbox(
+        "Selecione o Nº de Série",
+        sorted(df_pendentes["numero_serie"].unique())
+    )
+
     checklist_qualidade(serie, st.session_state.usuario)
+
 
 # ================================
 # START
