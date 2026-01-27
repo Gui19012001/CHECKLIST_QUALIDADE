@@ -170,8 +170,13 @@ def login():
 # ================================
 # APP
 # ================================
+# ================================
+# APP
+# ================================
 def app():
     login()
+
+    # Carrega apontamentos do dia
     df_apont = carregar_apontamentos()
     hoje = datetime.datetime.now(TZ).date()
     df_hoje = df_apont[df_apont["data_hora"].dt.date == hoje]
@@ -180,30 +185,37 @@ def app():
         st.info("Nenhum apontamento hoje")
         return
 
-    # Convertendo para string e removendo espaços
+    # Normaliza numero_serie
     df_hoje["numero_serie"] = df_hoje["numero_serie"].astype(str).str.strip()
 
+    # Busca todos os checklists inspecionados hoje
     inicio_utc, fim_utc = intervalo_hoje_utc()
+    
+    # Paginação caso tenha muitas linhas (Supabase não suporta limit alto)
+    series_inspecionadas_hoje = set()
+    offset = 0
+    batch = 1000
+    while True:
+        res = (
+            supabase.table("checklists")
+            .select("numero_serie")
+            .gte("data_hora", inicio_utc)
+            .lte("data_hora", fim_utc)
+            .range(offset, offset+batch-1)
+            .execute()
+        )
+        if not res.data:
+            break
+        series_inspecionadas_hoje.update(str(r["numero_serie"]).strip() for r in res.data)
+        offset += batch
 
-    # Buscar todas séries inspecionadas hoje
-    res = (
-        supabase.table("checklists")
-        .select("numero_serie")
-        .gte("data_hora", inicio_utc)
-        .lte("data_hora", fim_utc)
-        .execute()
-    )
-
-    series_inspecionadas_hoje = {str(r["numero_serie"]).strip() for r in res.data} if res.data else set()
-
-    # Garantir que session_state exista
+    # Session state
     if "series_concluidas" not in st.session_state:
         st.session_state.series_concluidas = set()
     else:
-        # Também converter para string
         st.session_state.series_concluidas = {str(s).strip() for s in st.session_state.series_concluidas}
 
-    # ✅ Apenas séries não inspecionadas
+    # Apenas séries que ainda não foram inspecionadas
     df_pendentes = df_hoje[
         ~df_hoje["numero_serie"].isin(series_inspecionadas_hoje | st.session_state.series_concluidas)
     ]
@@ -212,6 +224,7 @@ def app():
         st.success("✅ Todos os apontamentos de hoje já foram inspecionados")
         return
 
+    # Selectbox só com séries pendentes
     serie = st.selectbox(
         "Selecione o Nº de Série",
         sorted(df_pendentes["numero_serie"].unique())
