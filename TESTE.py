@@ -71,7 +71,7 @@ def salvar_checklist(serie, resultados, usuario):
         .eq("numero_serie", serie)
         .gte("data_hora", inicio_utc)
         .lte("data_hora", fim_utc)
-        .limit(100000)  # grande limite para não perder registros
+        .limit(100000)
         .execute()
     )
     if existe.data:
@@ -95,7 +95,6 @@ def salvar_checklist(serie, resultados, usuario):
     ]
 
     supabase.table("checklists").insert(registros).execute()
-
     st.cache_data.clear()
     st.session_state.series_concluidas.add(serie)
     st.success(f"✅ Checklist salvo – Série {serie}")
@@ -138,12 +137,21 @@ def checklist_qualidade(numero_serie, usuario):
             cols = st.columns([7, 3])
             cols[0].markdown(f"**{i}. {pergunta}**")
             resultados[i] = cols[1].radio(
-                "", ["✅", "❌", "🟡"], horizontal=True,
-                key=f"{numero_serie}_{i}", label_visibility="collapsed"
+                "",
+                ["", "✅", "❌", "🟡"],  # <-- opção vazia obrigando escolha
+                horizontal=True,
+                key=f"{numero_serie}_{i}",
+                label_visibility="collapsed"
             )
+
         salvar = st.form_submit_button("💾 Salvar Checklist")
 
     if salvar:
+        # Valida se todas as perguntas foram respondidas
+        if any(resultados[i] == "" for i in resultados):
+            st.error("⚠️ Você precisa selecionar uma opção para todas as perguntas antes de salvar.")
+            return
+
         dados = {item_keys[i]: {"status": status_emoji_para_texto(resultados[i]), "obs": ""} for i in resultados}
         salvar_checklist(numero_serie, dados, usuario)
 
@@ -170,9 +178,6 @@ def login():
 # ================================
 # APP
 # ================================
-# ================================
-# APP
-# ================================
 def app():
     login()
 
@@ -190,8 +195,6 @@ def app():
 
     # Busca todos os checklists inspecionados hoje
     inicio_utc, fim_utc = intervalo_hoje_utc()
-    
-    # Paginação caso tenha muitas linhas (Supabase não suporta limit alto)
     series_inspecionadas_hoje = set()
     offset = 0
     batch = 1000
@@ -238,5 +241,4 @@ def app():
 # ================================
 if __name__ == "__main__":
     app()
-
 
