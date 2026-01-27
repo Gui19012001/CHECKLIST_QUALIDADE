@@ -13,7 +13,6 @@ from pathlib import Path
 st.set_page_config(page_title="Controle de Qualidade", layout="wide")
 
 TZ = pytz.timezone("America/Sao_Paulo")
-UTC = pytz.UTC
 
 usuarios = {
     "admin": "admin",
@@ -49,44 +48,40 @@ def carregar_apontamentos():
 
     df = pd.DataFrame(res.data)
     if not df.empty:
-        df["data_hora"] = pd.to_datetime(df["data_hora"], utc=True).dt.tz_convert(TZ)
+        df["data_hora"] = pd.to_datetime(
+            df["data_hora"], utc=True, errors="coerce"
+        ).dt.tz_convert(TZ)
 
     return df
 
 
 # ================================
-# CHECKLIST – SALVAR (COM BLOQUEIO)
+# CHECKLIST – SALVAR (BLOQUEIO REAL)
 # ================================
 def salvar_checklist(serie, resultados, usuario):
 
-    agora_local = datetime.datetime.now(TZ)
+    hoje = datetime.datetime.now(TZ).date()
 
-    inicio_dia_local = TZ.localize(
-        datetime.datetime.combine(agora_local.date(), datetime.time.min)
-    )
-    fim_dia_local = TZ.localize(
-        datetime.datetime.combine(agora_local.date(), datetime.time.max)
-    )
-
-    inicio_utc = inicio_dia_local.astimezone(UTC).isoformat()
-    fim_utc = fim_dia_local.astimezone(UTC).isoformat()
-
-    # 🔒 BLOQUEIO REAL (UTC CORRETO)
-    existe = (
+    # 🔒 BUSCA TUDO DA SÉRIE
+    res = (
         supabase.table("checklists")
-        .select("id")
+        .select("id, data_hora")
         .eq("numero_serie", serie)
-        .gte("data_hora", inicio_utc)
-        .lte("data_hora", fim_utc)
-        .limit(1)
         .execute()
     )
 
-    if existe.data:
-        st.error("⚠️ Este Nº de Série já foi inspecionado hoje.")
-        return
+    if res.data:
+        df_exist = pd.DataFrame(res.data)
+        df_exist["data_hora"] = pd.to_datetime(
+            df_exist["data_hora"], errors="coerce"
+        )
 
-    data_hora = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # 🔥 BLOQUEIA SE JÁ EXISTE HOJE
+        if any(df_exist["data_hora"].dt.date == hoje):
+            st.error("⚠️ Este Nº de Série já foi inspecionado hoje.")
+            return
+
+    data_hora = datetime.datetime.now().isoformat()
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
 
     registros = [
@@ -218,24 +213,21 @@ def app():
         st.info("Nenhum apontamento hoje")
         return
 
-    agora_local = datetime.datetime.now(TZ)
-    inicio_utc = TZ.localize(
-        datetime.datetime.combine(agora_local.date(), datetime.time.min)
-    ).astimezone(UTC).isoformat()
+    # 🔥 BUSCA TODOS CHECKLISTS
+    res = supabase.table("checklists").select(
+        "numero_serie, data_hora"
+    ).execute()
 
-    fim_utc = TZ.localize(
-        datetime.datetime.combine(agora_local.date(), datetime.time.max)
-    ).astimezone(UTC).isoformat()
+    inspecionadas = set()
 
-    res = (
-        supabase.table("checklists")
-        .select("numero_serie")
-        .gte("data_hora", inicio_utc)
-        .lte("data_hora", fim_utc)
-        .execute()
-    )
+    if res.data:
+        df_check = pd.DataFrame(res.data)
+        df_check["data_hora"] = pd.to_datetime(
+            df_check["data_hora"], errors="coerce"
+        )
 
-    inspecionadas = {r["numero_serie"] for r in res.data} if res.data else set()
+        df_check = df_check[df_check["data_hora"].dt.date == hoje]
+        inspecionadas = set(df_check["numero_serie"])
 
     df_pendentes = df_hoje[
         ~df_hoje["numero_serie"].isin(
@@ -257,3 +249,4 @@ def app():
 
 if __name__ == "__main__":
     app()
+
