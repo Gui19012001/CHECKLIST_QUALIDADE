@@ -229,7 +229,7 @@ def app():
     st.sidebar.selectbox("Menu", ["Inspeção de Qualidade"])
 
     df_apont = carregar_apontamentos_hoje()
-    series_inspecionadas = carregar_series_inspecionadas_hoje()
+    series_inspecionadas = carregar_series_ja_inspecionadas_hoje(df_apont)
 
     codigos = df_apont["numero_serie"].unique().tolist() if not df_apont.empty else []
 
