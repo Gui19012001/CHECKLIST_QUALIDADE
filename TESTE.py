@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import datetime
 import pytz
-import base64
 from supabase import create_client
 import os
 from dotenv import load_dotenv
@@ -35,7 +34,7 @@ supabase = create_client(
 )
 
 # ================================
-# CACHE DE LEITURA (OTIMIZADO)
+# CACHE DE LEITURA
 # ================================
 @st.cache_data(ttl=60)
 def carregar_apontamentos_hoje():
@@ -59,26 +58,29 @@ def carregar_apontamentos_hoje():
     return df
 
 
-@st.cache_data(ttl=60)
-def carregar_checklists_hoje():
-    hoje_utc = datetime.datetime.now(TZ).astimezone(pytz.UTC).date().isoformat()
+@st.cache_data(ttl=300)
+def carregar_series_ja_inspecionadas():
+    """
+    Busca TODAS as séries já inspecionadas,
+    sem trazer histórico pesado.
+    """
+    series = set()
+    inicio = 0
+    passo = 1000
 
-    res = supabase.table("checklists") \
-        .select("numero_serie,data_hora") \
-        .gte("data_hora", hoje_utc) \
-        .execute()
+    while True:
+        res = supabase.table("checklists") \
+            .select("numero_serie") \
+            .range(inicio, inicio + passo - 1) \
+            .execute()
 
-    df = pd.DataFrame(res.data)
+        if not res.data:
+            break
 
-    if not df.empty:
-        df["data_hora"] = pd.to_datetime(
-            df["data_hora"],
-            utc=True,
-            format="ISO8601",
-            errors="coerce"
-        ).dt.tz_convert(TZ)
+        series.update(r["numero_serie"] for r in res.data)
+        inicio += passo
 
-    return df
+    return series
 
 
 # ================================
@@ -114,7 +116,7 @@ def salvar_checklist(serie, resultados, usuario):
 
     supabase.table("checklists").insert(registros).execute()
 
-    # 🔥 LIMPA CACHE E REMOVE DA LISTA NA HORA
+    # 🔥 ATUALIZA ESTADO IMEDIATO
     st.cache_data.clear()
     st.session_state.series_concluidas.add(serie)
 
@@ -225,14 +227,13 @@ def app():
     st.sidebar.selectbox("Menu", ["Inspeção de Qualidade"])
 
     df_apont = carregar_apontamentos_hoje()
-    df_checks = carregar_checklists_hoje()
+    series_inspecionadas = carregar_series_ja_inspecionadas()
 
     codigos = df_apont["numero_serie"].unique().tolist() if not df_apont.empty else []
-    ja_feitos = df_checks["numero_serie"].unique().tolist() if not df_checks.empty else []
 
     disponiveis = [
         c for c in codigos
-        if c not in ja_feitos
+        if c not in series_inspecionadas
         and c not in st.session_state.series_concluidas
     ]
 
