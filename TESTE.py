@@ -13,6 +13,7 @@ from pathlib import Path
 st.set_page_config(page_title="Controle de Qualidade", layout="wide")
 
 TZ = pytz.timezone("America/Sao_Paulo")
+UTC = pytz.utc
 
 usuarios = {
     "admin": "admin",
@@ -34,6 +35,20 @@ supabase = create_client(
 )
 
 # ================================
+# FUNÇÃO — INTERVALO UTC DO DIA (BR)
+# ================================
+def intervalo_hoje_utc():
+    hoje_br = datetime.datetime.now(TZ).date()
+
+    inicio_br = TZ.localize(datetime.datetime.combine(hoje_br, datetime.time.min))
+    fim_br    = TZ.localize(datetime.datetime.combine(hoje_br, datetime.time.max))
+
+    return (
+        inicio_br.astimezone(UTC).isoformat(),
+        fim_br.astimezone(UTC).isoformat()
+    )
+
+# ================================
 # CACHE – APONTAMENTOS
 # ================================
 @st.cache_data(ttl=30)
@@ -48,40 +63,32 @@ def carregar_apontamentos():
 
     df = pd.DataFrame(res.data)
     if not df.empty:
-        df["data_hora"] = pd.to_datetime(
-            df["data_hora"], utc=True, errors="coerce"
-        ).dt.tz_convert(TZ)
+        df["data_hora"] = pd.to_datetime(df["data_hora"], utc=True).dt.tz_convert(TZ)
 
     return df
-
 
 # ================================
 # CHECKLIST – SALVAR (BLOQUEIO REAL)
 # ================================
 def salvar_checklist(serie, resultados, usuario):
 
-    hoje = datetime.datetime.now(TZ).date()
+    inicio_utc, fim_utc = intervalo_hoje_utc()
 
-    # 🔒 BUSCA TUDO DA SÉRIE
-    res = (
+    existe = (
         supabase.table("checklists")
-        .select("id, data_hora")
+        .select("id")
         .eq("numero_serie", serie)
+        .gte("data_hora", inicio_utc)
+        .lte("data_hora", fim_utc)
+        .limit(1)
         .execute()
     )
 
-    if res.data:
-        df_exist = pd.DataFrame(res.data)
-        df_exist["data_hora"] = pd.to_datetime(
-            df_exist["data_hora"], errors="coerce"
-        )
+    if existe.data:
+        st.error("⚠️ Este Nº de Série já foi inspecionado hoje.")
+        return
 
-        # 🔥 BLOQUEIA SE JÁ EXISTE HOJE
-        if any(df_exist["data_hora"].dt.date == hoje):
-            st.error("⚠️ Este Nº de Série já foi inspecionado hoje.")
-            return
-
-    data_hora = datetime.datetime.now().isoformat()
+    data_hora = datetime.datetime.now(UTC).isoformat()
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
 
     registros = [
@@ -105,13 +112,11 @@ def salvar_checklist(serie, resultados, usuario):
     st.success(f"✅ Checklist salvo – Série {serie}")
     st.rerun()
 
-
 # ================================
 # UTIL
 # ================================
 def status_emoji_para_texto(emoji):
     return {"✅": "Conforme", "❌": "Não Conforme", "🟡": "N/A"}.get(emoji)
-
 
 # ================================
 # CHECKLIST VISUAL (INALTERADO)
@@ -175,7 +180,6 @@ def checklist_qualidade(numero_serie, usuario):
 
         salvar_checklist(numero_serie, dados, usuario)
 
-
 # ================================
 # LOGIN
 # ================================
@@ -198,7 +202,6 @@ def login():
 
         st.stop()
 
-
 # ================================
 # APP
 # ================================
@@ -207,27 +210,24 @@ def app():
 
     df_apont = carregar_apontamentos()
     hoje = datetime.datetime.now(TZ).date()
+
     df_hoje = df_apont[df_apont["data_hora"].dt.date == hoje]
 
     if df_hoje.empty:
         st.info("Nenhum apontamento hoje")
         return
 
-    # 🔥 BUSCA TODOS CHECKLISTS
-    res = supabase.table("checklists").select(
-        "numero_serie, data_hora"
-    ).execute()
+    inicio_utc, fim_utc = intervalo_hoje_utc()
 
-    inspecionadas = set()
+    res = (
+        supabase.table("checklists")
+        .select("numero_serie")
+        .gte("data_hora", inicio_utc)
+        .lte("data_hora", fim_utc)
+        .execute()
+    )
 
-    if res.data:
-        df_check = pd.DataFrame(res.data)
-        df_check["data_hora"] = pd.to_datetime(
-            df_check["data_hora"], errors="coerce"
-        )
-
-        df_check = df_check[df_check["data_hora"].dt.date == hoje]
-        inspecionadas = set(df_check["numero_serie"])
+    inspecionadas = {r["numero_serie"] for r in res.data} if res.data else set()
 
     df_pendentes = df_hoje[
         ~df_hoje["numero_serie"].isin(
@@ -241,11 +241,10 @@ def app():
 
     serie = st.selectbox(
         "Selecione o Nº de Série",
-        df_pendentes["numero_serie"].unique()
+        sorted(df_pendentes["numero_serie"].unique())
     )
 
     checklist_qualidade(serie, st.session_state.usuario)
-
 
 if __name__ == "__main__":
     app()
