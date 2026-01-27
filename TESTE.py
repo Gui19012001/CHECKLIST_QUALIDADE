@@ -59,25 +59,27 @@ def carregar_apontamentos_hoje():
 
 
 @st.cache_data(ttl=60)
-def carregar_series_inspecionadas_hoje():
+def carregar_series_ja_inspecionadas_hoje(df_apont):
     """
-    Retorna APENAS as séries inspecionadas HOJE,
-    usando data_hora >= início do dia local (convertido para UTC)
-    e garantindo DISTINCT por numero_serie.
+    Verifica, ENTRE OS EIXOS APONTADOS HOJE,
+    quais já existem no checklist.
+    data_hora é TIMESTAMP, então NÃO usamos data para filtrar.
     """
-    inicio_dia_local = datetime.datetime.now(TZ).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    if df_apont.empty:
+        return set()
 
-    inicio_dia_utc = inicio_dia_local.astimezone(pytz.UTC).isoformat()
+    series_hoje = df_apont["numero_serie"].dropna().unique().tolist()
+
+    if not series_hoje:
+        return set()
 
     res = supabase.table("checklists") \
         .select("numero_serie") \
-        .gte("data_hora", inicio_dia_utc) \
+        .in_("numero_serie", series_hoje) \
         .execute()
 
-    # DISTINCT manual (Supabase Python não tem distinct nativo)
     return set(r["numero_serie"] for r in res.data) if res.data else set()
+
 
 
 # ================================
