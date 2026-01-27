@@ -35,7 +35,7 @@ supabase = create_client(
 )
 
 # ================================
-# FUNÇÃO — INTERVALO UTC DO DIA (BR)
+# INTERVALO UTC DO DIA (BR)
 # ================================
 def intervalo_hoje_utc():
     hoje_br = datetime.datetime.now(TZ).date()
@@ -62,8 +62,13 @@ def carregar_apontamentos():
     )
 
     df = pd.DataFrame(res.data)
+
     if not df.empty:
-        df["data_hora"] = pd.to_datetime(df["data_hora"], utc=True).dt.tz_convert(TZ)
+        df["data_hora"] = pd.to_datetime(
+            df["data_hora"],
+            errors="coerce",
+            utc=True
+        ).dt.tz_convert(TZ)
 
     return df
 
@@ -227,11 +232,13 @@ def app():
         .execute()
     )
 
-    inspecionadas = {r["numero_serie"] for r in res.data} if res.data else set()
+    series_inspecionadas_hoje = {
+        r["numero_serie"] for r in res.data
+    } if res.data else set()
 
     df_pendentes = df_hoje[
         ~df_hoje["numero_serie"].isin(
-            inspecionadas | st.session_state.series_concluidas
+            series_inspecionadas_hoje | st.session_state.series_concluidas
         )
     ]
 
@@ -246,6 +253,9 @@ def app():
 
     checklist_qualidade(serie, st.session_state.usuario)
 
+# ================================
+# START
+# ================================
 if __name__ == "__main__":
     app()
 
