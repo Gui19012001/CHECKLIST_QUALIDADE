@@ -46,10 +46,12 @@ def carregar_checklists():
     passo = 250
 
     while True:
-        res = supabase.table("checklists") \
-            .select("*") \
-            .range(inicio, inicio + passo - 1) \
+        res = (
+            supabase.table("checklists")
+            .select("*")
+            .range(inicio, inicio + passo - 1)
             .execute()
+        )
 
         if not res.data:
             break
@@ -77,10 +79,12 @@ def carregar_apontamentos():
     passo = 250
 
     while True:
-        res = supabase.table("apontamentos") \
-            .select("*") \
-            .range(inicio, inicio + passo - 1) \
+        res = (
+            supabase.table("apontamentos")
+            .select("*")
+            .range(inicio, inicio + passo - 1)
             .execute()
+        )
 
         if not res.data:
             break
@@ -106,11 +110,13 @@ def carregar_apontamentos():
 # ================================
 def salvar_checklist(serie, resultados, usuario, foto_etiqueta=None, reinspecao=False):
 
-    existe = supabase.table("checklists") \
-        .select("id") \
-        .eq("numero_serie", serie) \
-        .limit(1) \
+    existe = (
+        supabase.table("checklists")
+        .select("id")
+        .eq("numero_serie", serie)
+        .limit(1)
         .execute()
+    )
 
     if not reinspecao and existe.data:
         st.error("⚠️ INVÁLIDO! DUPLICIDADE – Este Nº de Série já foi inspecionado.")
@@ -273,6 +279,7 @@ def app():
         df_apont = carregar_apontamentos()
         hoje = datetime.datetime.now(TZ).date()
 
+        # 🔹 Apontamentos de hoje
         df_hoje = (
             df_apont[df_apont["data_hora"].dt.date == hoje]
             if not df_apont.empty else pd.DataFrame()
@@ -280,13 +287,19 @@ def app():
 
         codigos = df_hoje["numero_serie"].unique().tolist()
 
+        # 🔹 Checklists feitos HOJE
         df_checks = carregar_checklists()
-        ja_feitos = (
-            df_checks["numero_serie"].unique()
-            if not df_checks.empty else []
-        )
 
-        disponiveis = [c for c in codigos if c not in ja_feitos]
+        if not df_checks.empty:
+            df_checks_hoje = df_checks[
+                df_checks["data_hora"].dt.date == hoje
+            ]
+            ja_feitos_hoje = df_checks_hoje["numero_serie"].unique()
+        else:
+            ja_feitos_hoje = []
+
+        # 🔹 Disponíveis = apontados hoje - inspecionados hoje
+        disponiveis = [c for c in codigos if c not in ja_feitos_hoje]
 
         if disponiveis:
             serie = st.selectbox("Selecione o Nº de Série", disponiveis)
@@ -297,3 +310,4 @@ def app():
 
 if __name__ == "__main__":
     app()
+
