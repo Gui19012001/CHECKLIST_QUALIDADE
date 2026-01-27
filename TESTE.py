@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import datetime
 import pytz
@@ -8,7 +7,6 @@ from supabase import create_client
 import os
 from dotenv import load_dotenv
 from pathlib import Path
-import plotly.graph_objects as go
 
 # ================================
 # CONFIG
@@ -37,29 +35,20 @@ supabase = create_client(
 )
 
 # ================================
-# CACHE DE LEITURA
+# CACHE DE LEITURA (OTIMIZADO)
 # ================================
 @st.cache_data(ttl=60)
-def carregar_checklists():
-    data = []
-    inicio = 0
-    passo = 1000
+def carregar_apontamentos_hoje():
+    hoje_utc = datetime.datetime.now(TZ).astimezone(pytz.UTC).date().isoformat()
 
-    while True:
-        res = supabase.table("checklists") \
-            .select("*") \
-            .range(inicio, inicio + passo - 1) \
-            .execute()
+    res = supabase.table("apontamentos") \
+        .select("numero_serie,data_hora") \
+        .gte("data_hora", hoje_utc) \
+        .execute()
 
-        if not res.data:
-            break
+    df = pd.DataFrame(res.data)
 
-        data.extend(res.data)
-        inicio += passo
-
-    df = pd.DataFrame(data)
-
-    if not df.empty and "data_hora" in df.columns:
+    if not df.empty:
         df["data_hora"] = pd.to_datetime(
             df["data_hora"],
             utc=True,
@@ -71,26 +60,17 @@ def carregar_checklists():
 
 
 @st.cache_data(ttl=60)
-def carregar_apontamentos():
-    data = []
-    inicio = 0
-    passo = 1000
+def carregar_checklists_hoje():
+    hoje_utc = datetime.datetime.now(TZ).astimezone(pytz.UTC).date().isoformat()
 
-    while True:
-        res = supabase.table("apontamentos") \
-            .select("*") \
-            .range(inicio, inicio + passo - 1) \
-            .execute()
+    res = supabase.table("checklists") \
+        .select("numero_serie,data_hora") \
+        .gte("data_hora", hoje_utc) \
+        .execute()
 
-        if not res.data:
-            break
+    df = pd.DataFrame(res.data)
 
-        data.extend(res.data)
-        inicio += passo
-
-    df = pd.DataFrame(data)
-
-    if not df.empty and "data_hora" in df.columns:
+    if not df.empty:
         df["data_hora"] = pd.to_datetime(
             df["data_hora"],
             utc=True,
@@ -104,7 +84,7 @@ def carregar_apontamentos():
 # ================================
 # CHECKLIST – SALVAMENTO
 # ================================
-def salvar_checklist(serie, resultados, usuario, foto_etiqueta=None, reinspecao=False):
+def salvar_checklist(serie, resultados, usuario):
 
     existe = supabase.table("checklists") \
         .select("id") \
@@ -112,40 +92,34 @@ def salvar_checklist(serie, resultados, usuario, foto_etiqueta=None, reinspecao=
         .limit(1) \
         .execute()
 
-    if not reinspecao and existe.data:
+    if existe.data:
         st.error("⚠️ INVÁLIDO! DUPLICIDADE – Este Nº de Série já foi inspecionado.")
-        return False
+        return
 
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
     data_hora = datetime.datetime.now(TZ).astimezone(pytz.UTC).isoformat()
 
-    foto_base64 = None
-    if foto_etiqueta:
-        foto_base64 = base64.b64encode(foto_etiqueta.getvalue()).decode()
-
     registros = []
 
     for item, info in resultados.items():
-        payload = {
+        registros.append({
             "numero_serie": serie,
             "item": item,
             "status": info["status"],
             "observacoes": info["obs"],
             "inspetor": usuario,
             "data_hora": data_hora,
-            "produto_reprovado": "Sim" if reprovado else "Não",
-            "reinspecao": "Sim" if reinspecao else "Não"
-        }
-
-        if item == "ETIQUETA" and foto_base64:
-            payload["foto_etiqueta"] = foto_base64
-
-        registros.append(payload)
+            "produto_reprovado": "Sim" if reprovado else "Não"
+        })
 
     supabase.table("checklists").insert(registros).execute()
 
-    st.success(f"✅ Checklist salvo com sucesso – Nº Série {serie}")
-    return True
+    # 🔥 LIMPA CACHE E REMOVE DA LISTA NA HORA
+    st.cache_data.clear()
+    st.session_state.series_concluidas.add(serie)
+
+    st.success(f"✅ Checklist salvo – Nº Série {serie}")
+    st.rerun()
 
 
 # ================================
@@ -192,51 +166,31 @@ def checklist_qualidade(numero_serie, usuario):
         10: "SOLDA"
     }
 
-    opcoes_modelos = {
-        4: ["Single", "Aço", "Alumínio", "N/A"],
-        6: ["Spring", "Cuíca", "N/A"],
-        7: ["Automático", "Manual", "N/A"],
-        10: ["Conforme", "Respingo", "Porosidade", "Falta de fusão"]
-    }
-
-    resultados, modelos = {}, {}
+    resultados = {}
 
     with st.form(f"form_{numero_serie}"):
         for i, pergunta in enumerate(perguntas, 1):
-            cols = st.columns([7, 2, 2])
+            cols = st.columns([7, 2])
             cols[0].markdown(f"**{i}. {pergunta}**")
 
-            resp = cols[1].radio(
-                "",
-                ["✅", "❌", "🟡"],
-                horizontal=True,
-                key=f"resp_{numero_serie}_{i}",
-                index=None,
-                label_visibility="collapsed"
-            )
-            resultados[i] = resp
-
-            if i in opcoes_modelos:
-                modelos[i] = cols[2].selectbox(
-                    "Modelo",
-                    [""] + opcoes_modelos[i],
-                    key=f"modelo_{numero_serie}_{i}",
-                    label_visibility="collapsed"
-                )
-            else:
-                modelos[i] = None
+            resultados[item_keys[i]] = {
+                "status": status_emoji_para_texto(
+                    cols[1].radio(
+                        "",
+                        ["✅", "❌", "🟡"],
+                        horizontal=True,
+                        key=f"{numero_serie}_{i}",
+                        index=None,
+                        label_visibility="collapsed"
+                    )
+                ),
+                "obs": None
+            }
 
         salvar = st.form_submit_button("💾 Salvar Checklist")
 
     if salvar:
-        dados = {}
-        for i, r in resultados.items():
-            dados[item_keys[i]] = {
-                "status": status_emoji_para_texto(r),
-                "obs": modelos.get(i)
-            }
-
-        salvar_checklist(numero_serie, dados, usuario)
+        salvar_checklist(numero_serie, resultados, st.session_state.usuario)
 
 
 # ================================
@@ -254,6 +208,7 @@ def login():
             if usuarios.get(user) == pwd:
                 st.session_state.logado = True
                 st.session_state.usuario = user
+                st.session_state.series_concluidas = set()
                 st.rerun()
             else:
                 st.error("Usuário ou senha inválidos")
@@ -267,34 +222,26 @@ def login():
 def app():
     login()
 
-    menu = st.sidebar.selectbox("Menu", ["Inspeção de Qualidade"])
+    st.sidebar.selectbox("Menu", ["Inspeção de Qualidade"])
 
-    if menu == "Inspeção de Qualidade":
-        df_apont = carregar_apontamentos()
-        hoje = datetime.datetime.now(TZ).date()
+    df_apont = carregar_apontamentos_hoje()
+    df_checks = carregar_checklists_hoje()
 
-        df_hoje = (
-            df_apont[df_apont["data_hora"].dt.date == hoje]
-            if not df_apont.empty else pd.DataFrame()
-        )
+    codigos = df_apont["numero_serie"].unique().tolist() if not df_apont.empty else []
+    ja_feitos = df_checks["numero_serie"].unique().tolist() if not df_checks.empty else []
 
-        codigos = df_hoje["numero_serie"].unique().tolist()
+    disponiveis = [
+        c for c in codigos
+        if c not in ja_feitos
+        and c not in st.session_state.series_concluidas
+    ]
 
-        df_checks = carregar_checklists()
-        ja_feitos = (
-            df_checks["numero_serie"].unique()
-            if not df_checks.empty else []
-        )
-
-        disponiveis = [c for c in codigos if c not in ja_feitos]
-
-        if disponiveis:
-            serie = st.selectbox("Selecione o Nº de Série", disponiveis)
-            checklist_qualidade(serie, st.session_state.usuario)
-        else:
-            st.info("Nenhum código disponível para inspeção.")
+    if disponiveis:
+        serie = st.selectbox("Selecione o Nº de Série", disponiveis)
+        checklist_qualidade(serie, st.session_state.usuario)
+    else:
+        st.info("Nenhum código disponível para inspeção.")
 
 
 if __name__ == "__main__":
     app()
-
