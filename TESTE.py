@@ -81,7 +81,7 @@ def salvar_checklist(serie, resultados, usuario):
 
     existe = (
         supabase.table("checklists")
-        .select("id")
+        .select("numero_serie")
         .eq("numero_serie", serie)
         .gte("data_hora", inicio_utc)
         .lte("data_hora", fim_utc)
