@@ -63,7 +63,7 @@ def carregar_apontamentos():
 # ================================
 # CHECKLIST – SALVAR
 # ================================
-def salvar_checklist(serie, resultados, usuario):
+def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
     inicio_utc, fim_utc = intervalo_hoje_utc()
     existe = (
         supabase.table("checklists")
@@ -89,6 +89,9 @@ def salvar_checklist(serie, resultados, usuario):
             "observacoes": info["obs"],
             "inspetor": usuario,
             "produto_reprovado": "Sim" if reprovado else "Não",
+            # ✅ NOVOS CAMPOS (precisam existir no Supabase)
+            "rastreio_cubo_esquerdo": (rastreio_esq or "").strip(),
+            "rastreio_cubo_direito": (rastreio_dir or "").strip(),
             "data_hora": data_hora
         }
         for item, info in resultados.items()
@@ -111,6 +114,22 @@ def status_emoji_para_texto(emoji):
 # ================================
 def checklist_qualidade(numero_serie, usuario):
     st.markdown(f"## ✔️ Checklist de Qualidade – Nº Série: {numero_serie}")
+
+    # ✅ NOVO BLOCO: Rastreio do cubo (esquerdo/direito)
+    st.markdown("### 🔎 Qual o número de rastreio do cubo?")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        rastreio_esq = st.text_input(
+            "Lado Esquerdo",
+            key=f"rastreio_esq_{numero_serie}"
+        )
+
+    with col2:
+        rastreio_dir = st.text_input(
+            "Lado Direito",
+            key=f"rastreio_dir_{numero_serie}"
+        )
 
     perguntas = [
         "Etiqueta do produto – As informações estão corretas?",
@@ -151,7 +170,7 @@ def checklist_qualidade(numero_serie, usuario):
             return
 
         dados = {item_keys[i]: {"status": status_emoji_para_texto(resultados[i]), "obs": ""} for i in resultados}
-        salvar_checklist(numero_serie, dados, usuario)
+        salvar_checklist(numero_serie, dados, usuario, rastreio_esq, rastreio_dir)
 
 # ================================
 # LOGIN
@@ -199,7 +218,7 @@ def app():
             .select("numero_serie")
             .gte("data_hora", inicio_utc)
             .lte("data_hora", fim_utc)
-            .range(offset, offset+batch-1)
+            .range(offset, offset + batch - 1)
             .execute()
         )
         if not res.data:
@@ -224,7 +243,10 @@ def app():
     df_pendentes = df_pendentes.sort_values("data_hora", ascending=True)
     serie = st.selectbox(
         "Selecione o Nº de Série",
-        sorted(df_pendentes["numero_serie"].unique(), key=lambda x: df_pendentes[df_pendentes["numero_serie"]==x]["data_hora"].iloc[0])
+        sorted(
+            df_pendentes["numero_serie"].unique(),
+            key=lambda x: df_pendentes[df_pendentes["numero_serie"] == x]["data_hora"].iloc[0]
+        )
     )
 
     checklist_qualidade(serie, st.session_state.usuario)
@@ -234,6 +256,5 @@ def app():
 # ================================
 if __name__ == "__main__":
     app()
-
 
 
