@@ -40,7 +40,7 @@ supabase = create_client(
 def intervalo_hoje_utc():
     hoje_br = datetime.datetime.now(TZ).date()
     inicio_br = TZ.localize(datetime.datetime.combine(hoje_br, datetime.time.min))
-    fim_br    = TZ.localize(datetime.datetime.combine(hoje_br, datetime.time.max))
+    fim_br = TZ.localize(datetime.datetime.combine(hoje_br, datetime.time.max))
     return inicio_br.astimezone(UTC).isoformat(), fim_br.astimezone(UTC).isoformat()
 
 # ================================
@@ -71,13 +71,14 @@ def status_emoji_para_texto(emoji):
 # ================================
 def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
     inicio_utc, fim_utc = intervalo_hoje_utc()
+
     existe = (
         supabase.table("checklists")
         .select("numero_serie")
         .eq("numero_serie", serie)
         .gte("data_hora", inicio_utc)
         .lte("data_hora", fim_utc)
-        .limit(100000)
+        .limit(1)
         .execute()
     )
     if existe.data:
@@ -85,11 +86,8 @@ def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
         return
 
     data_hora = datetime.datetime.now(UTC).isoformat()
-
-    # ✅ Reprovado considera SÓ as perguntas normais (resultados)
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
 
-    # Linhas normais (uma por item/pergunta)
     registros = [
         {
             "numero_serie": serie,
@@ -103,10 +101,8 @@ def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
         for item, info in resultados.items()
     ]
 
-    # ✅ MAIS 1 LINHA igual as perguntas: RASTREIO_CUBO
-    rastreio_esq = (rastreio_esq or "").strip()
-    rastreio_dir = (rastreio_dir or "").strip()
-    texto_rastreio = f"Lado Esquerdo: {rastreio_esq or '-'} / Lado Direito: {rastreio_dir or '-'}"
+    # ✅ Linha adicional igual pergunta normal
+    texto_rastreio = f"E:{rastreio_esq or '-'} / D:{rastreio_dir or '-'}"
 
     registros.append(
         {
@@ -121,6 +117,7 @@ def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
     )
 
     supabase.table("checklists").insert(registros).execute()
+
     st.cache_data.clear()
     st.session_state.series_concluidas.add(serie)
     st.success(f"✅ Checklist salvo – Série {serie}")
@@ -132,13 +129,28 @@ def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
 def checklist_qualidade(numero_serie, usuario):
     st.markdown(f"## ✔️ Checklist de Qualidade – Nº Série: {numero_serie}")
 
-    # ✅ Pergunta do rastreio em uma linha + 2 caixinhas
-    st.markdown("**Quais o Rastreio do Cubo: Lado Esquerdo / Lado Direito**")
-    c1, c2 = st.columns(2)
-    with c1:
-        rastreio_esq = st.text_input("Lado Esquerdo", key=f"rastreio_esq_{numero_serie}")
-    with c2:
-        rastreio_dir = st.text_input("Lado Direito", key=f"rastreio_dir_{numero_serie}")
+    # 🔹 BLOCO MINIMALISTA
+    st.markdown("**Rastreio Cubo (E / D)**")
+
+    col_esq, col_dir = st.columns([1, 1])
+
+    with col_esq:
+        rastreio_esq = st.text_input(
+            "",
+            max_chars=4,
+            placeholder="E",
+            key=f"rastreio_esq_{numero_serie}",
+            label_visibility="collapsed"
+        )
+
+    with col_dir:
+        rastreio_dir = st.text_input(
+            "",
+            max_chars=4,
+            placeholder="D",
+            key=f"rastreio_dir_{numero_serie}",
+            label_visibility="collapsed"
+        )
 
     perguntas = [
         "Etiqueta do produto – As informações estão corretas?",
@@ -161,12 +173,13 @@ def checklist_qualidade(numero_serie, usuario):
 
     resultados = {}
     with st.form(f"form_{numero_serie}"):
+
         for i, pergunta in enumerate(perguntas, 1):
             cols = st.columns([7, 3])
             cols[0].markdown(f"**{i}. {pergunta}**")
             resultados[i] = cols[1].radio(
                 "",
-                ["", "✅", "❌", "🟡"],  # opção vazia obrigando escolha
+                ["", "✅", "❌", "🟡"],
                 horizontal=True,
                 key=f"{numero_serie}_{i}",
                 label_visibility="collapsed"
@@ -179,7 +192,14 @@ def checklist_qualidade(numero_serie, usuario):
             st.error("⚠️ Você precisa selecionar uma opção para todas as perguntas antes de salvar.")
             return
 
-        dados = {item_keys[i]: {"status": status_emoji_para_texto(resultados[i]), "obs": ""} for i in resultados}
+        dados = {
+            item_keys[i]: {
+                "status": status_emoji_para_texto(resultados[i]),
+                "obs": ""
+            }
+            for i in resultados
+        }
+
         salvar_checklist(numero_serie, dados, usuario, rastreio_esq, rastreio_dir)
 
 # ================================
@@ -210,6 +230,11 @@ def app():
 
     df_apont = carregar_apontamentos()
     hoje = datetime.datetime.now(TZ).date()
+
+    if df_apont.empty:
+        st.info("Nenhum apontamento hoje")
+        return
+
     df_hoje = df_apont[df_apont["data_hora"].dt.date == hoje]
 
     if df_hoje.empty:
@@ -220,6 +245,7 @@ def app():
 
     inicio_utc, fim_utc = intervalo_hoje_utc()
     series_inspecionadas_hoje = set()
+
     offset = 0
     batch = 1000
     while True:
@@ -233,13 +259,12 @@ def app():
         )
         if not res.data:
             break
+
         series_inspecionadas_hoje.update(str(r["numero_serie"]).strip() for r in res.data)
         offset += batch
 
     if "series_concluidas" not in st.session_state:
         st.session_state.series_concluidas = set()
-    else:
-        st.session_state.series_concluidas = {str(s).strip() for s in st.session_state.series_concluidas}
 
     df_pendentes = df_hoje[
         ~df_hoje["numero_serie"].isin(series_inspecionadas_hoje | st.session_state.series_concluidas)
@@ -249,8 +274,8 @@ def app():
         st.success("✅ Todos os apontamentos de hoje já foram inspecionados")
         return
 
-    # --- ORDENANDO pelo mais antigo primeiro ---
     df_pendentes = df_pendentes.sort_values("data_hora", ascending=True)
+
     serie = st.selectbox(
         "Selecione o Nº de Série",
         sorted(
