@@ -61,6 +61,12 @@ def carregar_apontamentos():
     return df
 
 # ================================
+# UTIL
+# ================================
+def status_emoji_para_texto(emoji):
+    return {"✅": "Conforme", "❌": "Não Conforme", "🟡": "N/A"}.get(emoji)
+
+# ================================
 # CHECKLIST – SALVAR
 # ================================
 def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
@@ -79,8 +85,11 @@ def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
         return
 
     data_hora = datetime.datetime.now(UTC).isoformat()
+
+    # ✅ Reprovado considera SÓ as perguntas normais (resultados)
     reprovado = any(v["status"] == "Não Conforme" for v in resultados.values())
 
+    # Linhas normais (uma por item/pergunta)
     registros = [
         {
             "numero_serie": serie,
@@ -89,13 +98,27 @@ def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
             "observacoes": info["obs"],
             "inspetor": usuario,
             "produto_reprovado": "Sim" if reprovado else "Não",
-            # ✅ NOVOS CAMPOS (precisam existir no Supabase)
-            "rastreio_cubo_esquerdo": (rastreio_esq or "").strip(),
-            "rastreio_cubo_direito": (rastreio_dir or "").strip(),
             "data_hora": data_hora
         }
         for item, info in resultados.items()
     ]
+
+    # ✅ MAIS 1 LINHA igual as perguntas: RASTREIO_CUBO
+    rastreio_esq = (rastreio_esq or "").strip()
+    rastreio_dir = (rastreio_dir or "").strip()
+    texto_rastreio = f"Lado Esquerdo: {rastreio_esq or '-'} / Lado Direito: {rastreio_dir or '-'}"
+
+    registros.append(
+        {
+            "numero_serie": serie,
+            "item": "RASTREIO_CUBO",
+            "status": "Informado",
+            "observacoes": texto_rastreio,
+            "inspetor": usuario,
+            "produto_reprovado": "Sim" if reprovado else "Não",
+            "data_hora": data_hora
+        }
+    )
 
     supabase.table("checklists").insert(registros).execute()
     st.cache_data.clear()
@@ -104,32 +127,18 @@ def salvar_checklist(serie, resultados, usuario, rastreio_esq, rastreio_dir):
     st.rerun()
 
 # ================================
-# UTIL
-# ================================
-def status_emoji_para_texto(emoji):
-    return {"✅": "Conforme", "❌": "Não Conforme", "🟡": "N/A"}.get(emoji)
-
-# ================================
 # CHECKLIST VISUAL
 # ================================
 def checklist_qualidade(numero_serie, usuario):
     st.markdown(f"## ✔️ Checklist de Qualidade – Nº Série: {numero_serie}")
 
-    # ✅ NOVO BLOCO: Rastreio do cubo (esquerdo/direito)
-    st.markdown("### 🔎 Qual o número de rastreio do cubo?")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        rastreio_esq = st.text_input(
-            "Lado Esquerdo",
-            key=f"rastreio_esq_{numero_serie}"
-        )
-
-    with col2:
-        rastreio_dir = st.text_input(
-            "Lado Direito",
-            key=f"rastreio_dir_{numero_serie}"
-        )
+    # ✅ Pergunta do rastreio em uma linha + 2 caixinhas
+    st.markdown("**Quais o Rastreio do Cubo: Lado Esquerdo / Lado Direito**")
+    c1, c2 = st.columns(2)
+    with c1:
+        rastreio_esq = st.text_input("Lado Esquerdo", key=f"rastreio_esq_{numero_serie}")
+    with c2:
+        rastreio_dir = st.text_input("Lado Direito", key=f"rastreio_dir_{numero_serie}")
 
     perguntas = [
         "Etiqueta do produto – As informações estão corretas?",
@@ -156,7 +165,8 @@ def checklist_qualidade(numero_serie, usuario):
             cols = st.columns([7, 3])
             cols[0].markdown(f"**{i}. {pergunta}**")
             resultados[i] = cols[1].radio(
-                "", ["", "✅", "❌", "🟡"],  # opção vazia obrigando escolha
+                "",
+                ["", "✅", "❌", "🟡"],  # opção vazia obrigando escolha
                 horizontal=True,
                 key=f"{numero_serie}_{i}",
                 label_visibility="collapsed"
